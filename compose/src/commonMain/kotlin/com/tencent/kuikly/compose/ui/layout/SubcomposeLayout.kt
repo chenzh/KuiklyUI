@@ -327,7 +327,6 @@ fun SubcomposeLayout(
                     return@scroll
                 }
 
-                val prevOffset = kuiklyInfo.contentOffset
                 kuiklyInfo.contentOffset = offset
                 (scrollableState as? PagerState)?.onNativeContentOffsetChanged(offset)
                 (scrollableState as? DrawerInternalPagerState)?.onNativeContentOffsetChanged(offset)
@@ -358,8 +357,32 @@ fun SubcomposeLayout(
                 } else {
                     kuiklyInfo.realContentSize!! - kuiklyInfo.viewportSize - kuiklyInfo.composeOffset
                 }
-                // 判断是否滑出边界
+                // 判断是否滑出边界（顶部：绝对 offset；底部：与 compose 基准失步的越界区，对称处理）
+                // 底部越界的修复核心在于提前 return，阻断下方的 kuiklyOnScroll(delta) 传播，
+                // 从而避免原生回弹把 lastScrolledBackward 误置为 true。
+                // 此处调用 tryExpandStartSize 仅为与既有底部处理（下方 delta>toButtomDelta 分支）保持对齐；
+                // 该函数是顶部扩容例程，底部越界时基本为 no-op（仅当 isComposeAtTopForScrollSync() 为真时才回退 scrollView，
+                // 例如内容短于一屏且开启 bounce 的场景，行为可接受）。
                 if (offset < 0 && scrollableState.isAtTop()) {
+                    return@scroll
+                } else if (
+                    scrollableState.lastItemVisible() &&
+                    toButtomDelta != null &&
+                    toButtomDelta <= 0 &&
+                    offset > kuiklyInfo.composeOffset
+                ) {
+                    scrollableState.tryExpandStartSize(offset, true)
+                    return@scroll
+                } else if (
+                    scrollableState.lastItemVisible() &&
+                    toButtomDelta != null &&
+                    toButtomDelta <= 0 &&
+                    delta < 0 &&
+                    !kuiklyInfo.isDragging
+                ) {
+                    // 回弹期间持续把 composeOffset 收敛到实际 offset；顶部越界无需此步，因为顶部 offset 恒为 0
+                    kuiklyInfo.composeOffset = offset.toFloat()
+                    scrollableState.tryExpandStartSize(offset, true)
                     return@scroll
                 } else if (toButtomDelta != null && delta > toButtomDelta) {
                     if (toButtomDelta.toInt() <= 0) {
